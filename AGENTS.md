@@ -85,9 +85,16 @@ data/vulndb/             cached Wordfence feed (~140 MB)
 ## CLI surface (current)
 
 `versions`, `download`, `extract`, `vulns`, `diff`, `info`, `clean`.
-`clean` requires at least one of `--archives / --extracted / --vulndb /
---catalog / --all`; with no flags it is a no-op by design (so users
-cannot wipe data accidentally).
+
+Notable flags:
+- `download --version / -v` (multiple): download only specific versions.
+- `download --extract`: auto-extract after downloading.
+- `download --include-trunk`: include the development snapshot.
+- `clean` requires at least one of `--archives / --extracted / --vulndb /
+  --catalog / --all`; with no flags it is a no-op by design (so users
+  cannot wipe data accidentally).
+- `clean --slug`: scope cleanup to one plugin (archives/extracted only).
+- `clean --dry-run`: preview what would be deleted.
 
 ## Conventions for new code
 
