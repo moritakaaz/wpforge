@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Secrets — keep .env.example tracked, ignore real .env files
+.env
+.env.*
+!.env.example
+
+# Project data
+data/plugins/
+data/extracted/
+data/catalog.db
+data/catalog.db-journal
+data/vulndb/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store

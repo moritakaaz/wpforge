@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wpforge"
+version = "0.1.0"
+description = "Forge a local archive of WordPress plugin versions for security research"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "moritakaaz" }]
+keywords = ["wordpress", "security", "research", "plugin", "vulnerability", "downloader"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = [
+    "httpx[http2]>=0.27",
+    "anyio>=4.3",
+    "click>=8.1",
+    "rich>=13.7",
+    "tenacity>=8.2",
+    "platformdirs>=4.2",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+wpforge = "wpforge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wpforge"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
