@@ -129,6 +129,11 @@ def versions(ctx: click.Context, slug: str) -> None:
 @main.command()
 @click.argument("slugs", nargs=-1, required=True)
 @click.option(
+    "--version", "-v",
+    multiple=True,
+    help="Download only specific version(s). Can be repeated.",
+)
+@click.option(
     "--extract/--no-extract",
     default=False,
     help="Extract zips after downloading.",
@@ -140,9 +145,13 @@ def versions(ctx: click.Context, slug: str) -> None:
 )
 @click.pass_context
 def download(
-    ctx: click.Context, slugs: tuple[str, ...], extract: bool, include_trunk: bool
+    ctx: click.Context,
+    slugs: tuple[str, ...],
+    version: tuple[str, ...],
+    extract: bool,
+    include_trunk: bool,
 ) -> None:
-    """Download every version of each SLUG."""
+    """Download every version of each SLUG (or only --version if specified)."""
     cfg: Config = ctx.obj["config"]
     catalog: Catalog = ctx.obj["catalog"]
 
@@ -165,15 +174,20 @@ def download(
                 for pv in info.versions:
                     if pv.version.lower() == "trunk" and not include_trunk:
                         continue
+                    if version and pv.version not in version:
+                        continue
                     catalog.register_version(
                         slug=pv.slug, version=pv.version, download_url=pv.download_url
                     )
                     all_versions.append(pv)
 
+                queued = sum(
+                    1 for pv in info.versions
+                    if (pv.version.lower() != "trunk" or include_trunk)
+                    and (not version or pv.version in version)
+                )
                 console.print(
-                    f"[green]{info.slug}[/green]: queued "
-                    f"{sum(1 for pv in info.versions if pv.version.lower() != 'trunk' or include_trunk)}"
-                    f" versions"
+                    f"[green]{info.slug}[/green]: queued {queued} versions"
                 )
 
         if not all_versions:

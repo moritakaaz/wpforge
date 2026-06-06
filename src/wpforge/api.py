@@ -12,6 +12,7 @@ retry/backoff to be a good citizen.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,7 +126,7 @@ class WordPressAPI:
 
         return PluginInfo(
             slug=slug,
-            name=payload.get("name", slug),
+            name=html.unescape(payload.get("name", slug)),
             current_version=payload.get("version", ""),
             last_updated=payload.get("last_updated"),
             homepage=payload.get("homepage"),
