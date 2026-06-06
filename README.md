@@ -1,4 +1,4 @@
-﻿# wpforge
+# wpforge
 
 Bulk-download every published version of WordPress plugins from the official
 WordPress.org repository for offline security research, vulnerability triage,
@@ -209,15 +209,15 @@ src/wpforge/
 
 ## Troubleshooting
 
-- **`wpforge: command not found`** â€” the virtualenv is not activated. Re-run
+- **`wpforge: command not found`** — the virtualenv is not activated. Re-run
   the activation step from the install section, or invoke the CLI as a
   module: `python -m wpforge ...`.
-- **`Activate.ps1 cannot be loaded`** (Windows) â€” run
+- **`Activate.ps1 cannot be loaded`** (Windows) — run
   `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
   once and retry.
-- **`No Wordfence API key configured`** â€” copy `.env.example` to `.env`
+- **`No Wordfence API key configured`** — copy `.env.example` to `.env`
   and fill in `WORDFENCE_API_KEY`, or pass `--api-key`.
-- **Some versions reported as missing (404)** â€” those releases were yanked
+- **Some versions reported as missing (404)** — those releases were yanked
   from WordPress.org. The downloader records the gap and continues.
 
 ## Notes
