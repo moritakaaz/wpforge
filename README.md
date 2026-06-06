@@ -143,6 +143,18 @@ Download every version (skipping already-downloaded ones) and auto-extract:
 wpforge download contact-form-7 --extract
 ```
 
+Download only a specific version:
+
+```bash
+wpforge download contact-form-7 --version 5.7.1
+```
+
+Download multiple specific versions:
+
+```bash
+wpforge download contact-form-7 -v 5.7 -v 5.7.1
+```
+
 Multiple plugins at once with higher concurrency:
 
 ```bash
