@@ -137,10 +137,23 @@ commit. Do not batch unrelated changes.
 
 ## Context management
 
-Conversations with AI agents are token-limited. Compress conversation
-history regularly using the DCP compress tool (or equivalent) after each
-completed task/prompt. Keep raw context only for actively in-progress
-work; everything else should be crystallised into summaries.
+Conversations with AI agents are token-limited. **Compress immediately
+after every completed task or user prompt** — do not wait until the
+context window is nearly full or until a "major transition" occurs.
+This is non-negotiable; failing to compress promptly degrades retrieval
+quality and wastes token budget on stale content.
+
+Rules:
+1. After finishing a task (commit pushed, question answered, etc.),
+   compress all conversation content related to that task before
+   responding to the next prompt.
+2. Keep raw context only for the actively in-progress step; everything
+   else must be crystallised into summaries.
+3. If a single task spans many tool calls, compress intermediate
+   exploration noise (failed attempts, verbose outputs) as soon as
+   the exploration phase concludes and you have clear findings.
+4. Never rely on "I'll compress later" — later never comes when
+   context runs out mid-task.
 
 ## Git
 
