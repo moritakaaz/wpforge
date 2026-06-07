@@ -373,6 +373,8 @@ def diff(
     # --- Vulnerability cross-reference ---
     vuln_labels: list[str] = []
     vuln_file_map: dict[str, list[str]] = {}  # path -> list of vuln labels
+    # Store per-CVE file+line refs for snippet display.
+    vuln_snippets: list[tuple[str, str, list[tuple[str, int | None]]]] = []
     if vulns:
         catalog: Catalog = ctx.obj["catalog"]
         vdb = VulnDB(config=cfg, catalog=catalog)
@@ -399,10 +401,11 @@ def diff(
                 label += f" [fixed in {fixed_in}]"
             vuln_labels.append(label)
 
-            # Fetch per-file references from MITRE CVE API.
+            # Fetch per-file references with line numbers from MITRE CVE API.
             if cve:
-                ref_files = _fetch_cve_file_refs(cve, slug)
-                for ref_path in ref_files:
+                refs_with_lines = _fetch_cve_file_refs_with_lines(cve, slug)
+                vuln_snippets.append((label, cve, refs_with_lines))
+                for ref_path, _line in refs_with_lines:
                     if ref_path in all_changed:
                         vuln_file_map.setdefault(ref_path, []).append(label)
 
@@ -434,15 +437,32 @@ def diff(
         f"{len(summary.modified)} modified[/bold]"
     )
 
-    # --- Vuln summary ---
+    # --- Vuln summary with code snippets ---
     if vulns and vuln_labels:
+        from rich.panel import Panel
+        from rich.text import Text
+
         console.print()
         console.print(
             f"[bold red]{len(vuln_labels)} known vulnerability(ies) "
             f"affect this plugin in the diffed range:[/bold red]"
         )
-        for v in sorted(vuln_labels):
-            console.print(f"  [red]* {v}[/red]")
+        for label, _cve, refs_with_lines in vuln_snippets:
+            console.print(f"\n  [red]* {label}[/red]")
+            if refs_with_lines:
+                for ref_path, line_no in refs_with_lines:
+                    if line_no:
+                        snippet = _read_snippet(
+                            cfg, slug, version_a, ref_path, line_no
+                        )
+                        if snippet:
+                            header = f"{ref_path}#L{line_no}"
+                            console.print(Panel(
+                                Text(snippet),
+                                title=header,
+                                border_style="red",
+                                expand=False,
+                            ))
     elif vulns:
         console.print()
         console.print("[green]No known vulnerabilities found for this plugin.[/green]")
@@ -500,6 +520,77 @@ def _fetch_cve_file_refs(cve_id: str, slug: str) -> set[str]:
             refs.add(m.group(1))
 
     return refs
+
+
+def _fetch_cve_file_refs_with_lines(
+    cve_id: str, slug: str
+) -> list[tuple[str, int | None]]:
+    """Fetch file references with line numbers from MITRE CVE API.
+
+    Returns a list of (relative_path, line_number) tuples.
+    line_number is None if the URL has no #L fragment.
+    """
+    import re
+
+    import httpx as _httpx
+
+    url = f"https://cveawg.mitre.org/api/cve/{cve_id}"
+    try:
+        resp = _httpx.get(url, timeout=15, follow_redirects=True)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception:
+        return []
+
+    refs: list[tuple[str, int | None]] = []
+    pattern = re.compile(
+        rf"plugins\.trac\.wordpress\.org/browser/{re.escape(slug)}"
+        r"/(?:tags/[^/]+|trunk)/(.+?)(?:#L(\d+))?$"
+    )
+
+    containers = data.get("containers", {})
+    cna = containers.get("cna", {})
+    for ref in cna.get("references", []):
+        ref_url = ref.get("url", "")
+        m = pattern.search(ref_url)
+        if m:
+            path = m.group(1)
+            line = int(m.group(2)) if m.group(2) else None
+            refs.append((path, line))
+
+    # Deduplicate while preserving order.
+    seen: set[tuple[str, int | None]] = set()
+    deduped: list[tuple[str, int | None]] = []
+    for item in refs:
+        if item not in seen:
+            seen.add(item)
+            deduped.append(item)
+    return deduped
+
+
+def _read_snippet(
+    cfg: Config, slug: str, version: str, rel_path: str, line: int, context: int = 5
+) -> str | None:
+    """Read a code snippet from an extracted plugin file around the given line.
+
+    Returns the snippet with line numbers, or None if the file can't be read.
+    """
+    file_path = cfg.extracted_dir / slug / version / rel_path
+    if not file_path.is_file():
+        return None
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+
+    start = max(0, line - 1 - context)
+    end = min(len(lines), line - 1 + context + 1)
+    snippet_lines: list[str] = []
+    for i in range(start, end):
+        marker = ">>>" if i == line - 1 else "   "
+        snippet_lines.append(f"{marker} {i + 1:4d} | {lines[i]}")
+    return "\n".join(snippet_lines)
 
 
 def _vuln_badge(labels: list[str] | None) -> str:

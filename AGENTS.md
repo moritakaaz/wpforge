@@ -129,6 +129,13 @@ When implementing a feature or fix:
 Each logical change (feature, bugfix, doc improvement) gets its own
 commit. Do not batch unrelated changes.
 
+## Context management
+
+Conversations with AI agents are token-limited. Compress conversation
+history regularly using the DCP compress tool (or equivalent) after each
+completed task/prompt. Keep raw context only for actively in-progress
+work; everything else should be crystallised into summaries.
+
 ## Git
 
 Commit messages follow conventional-prose style (subject line + body).
