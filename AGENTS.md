@@ -114,6 +114,18 @@ Notable flags:
 - HTTP/2 is enabled in both clients (`http2=True`); `h2` is pulled in via
   `httpx[http2]` extra. Don't drop the extra without disabling HTTP/2.
 
+## Workflow for agents
+
+When implementing a feature or fix:
+1. Make the code change.
+2. Update `README.md` if user-facing behaviour changes.
+3. Update `AGENTS.md` if the change affects CLI surface, conventions,
+   or anything an agent would need to know.
+4. Commit all related files together and push.
+
+Each logical change (feature, bugfix, doc improvement) gets its own
+commit. Do not batch unrelated changes.
+
 ## Git
 
 Commit messages follow conventional-prose style (subject line + body).

@@ -161,6 +161,13 @@ Multiple plugins at once with higher concurrency:
 wpforge -c 12 download contact-form-7 woocommerce elementor
 ```
 
+Extract already-downloaded archives (without re-downloading):
+
+```bash
+wpforge extract contact-form-7           # extract all downloaded versions
+wpforge extract contact-form-7 5.7.1     # extract one specific version
+```
+
 Cross-reference against the Wordfence vuln feed:
 
 ```bash
