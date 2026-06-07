@@ -90,6 +90,8 @@ Notable flags:
 - `download --version / -v` (multiple): download only specific versions.
 - `download --extract`: auto-extract after downloading.
 - `download --include-trunk`: include the development snapshot.
+- `diff --file <path>`: show unified diff for a single file only.
+- `diff --summary-only`: show only the file-change table, skip inline diff.
 - `clean` requires at least one of `--archives / --extracted / --vulndb /
   --catalog / --all`; with no flags it is a no-op by design (so users
   cannot wipe data accidentally).

@@ -101,7 +101,9 @@ class Differ:
         a_file = a_root / relative_path
         b_file = b_root / relative_path
 
-        if a_file.suffix.lower() not in TEXT_EXTENSIONS:
+        # Check extension from whichever side exists.
+        ext = (a_file.suffix or b_file.suffix).lower()
+        if ext not in TEXT_EXTENSIONS:
             return f"<{relative_path}: binary or non-text, skipping inline diff>"
 
         a_lines = _read_text(a_file)

@@ -332,6 +332,12 @@ def vulns(
     default=None,
     help="Print a unified diff of a single file across the two versions.",
 )
+@click.option(
+    "--summary-only",
+    is_flag=True,
+    default=False,
+    help="Show only the file-change summary table (no inline diff).",
+)
 @click.pass_context
 def diff(
     ctx: click.Context,
@@ -339,13 +345,18 @@ def diff(
     version_a: str,
     version_b: str,
     file_path: str | None,
+    summary_only: bool,
 ) -> None:
-    """Diff two extracted versions of SLUG."""
+    """Diff two extracted versions of SLUG.
+
+    By default shows a git-style colored unified diff for all changed files.
+    Use --summary-only for just the file list, or --file for a single file.
+    """
     cfg: Config = ctx.obj["config"]
     differ = Differ(cfg)
 
     if file_path:
-        console.print(differ.unified(slug, version_a, version_b, file_path))
+        _print_colored_diff(differ.unified(slug, version_a, version_b, file_path))
         return
 
     summary = differ.summarise(slug, version_a, version_b)
@@ -364,6 +375,37 @@ def diff(
         f"{len(summary.removed)} removed, "
         f"{len(summary.modified)} modified[/bold]"
     )
+
+    if summary_only:
+        return
+
+    # Show unified diff for all changed/added/removed files.
+    console.print()
+    all_paths = (
+        [(p, "added") for p in summary.added]
+        + [(p, "removed") for p in summary.removed]
+        + [(p, "modified") for p in summary.modified]
+    )
+    for rel_path, _change_type in all_paths:
+        diff_text = differ.unified(slug, version_a, version_b, rel_path)
+        if diff_text:
+            _print_colored_diff(diff_text)
+            console.print()
+
+
+def _print_colored_diff(diff_text: str) -> None:
+    """Print unified diff lines with git-style coloring."""
+    for line in diff_text.splitlines():
+        if line.startswith("---") or line.startswith("+++"):
+            console.print(f"[bold]{line}[/bold]")
+        elif line.startswith("@@"):
+            console.print(f"[cyan]{line}[/cyan]")
+        elif line.startswith("+"):
+            console.print(f"[green]{line}[/green]")
+        elif line.startswith("-"):
+            console.print(f"[red]{line}[/red]")
+        else:
+            console.print(line)
 
 
 # ---------------------------------------------------------------------------
