@@ -372,6 +372,7 @@ def diff(
 
     # --- Vulnerability cross-reference ---
     vuln_labels: list[str] = []
+    vuln_file_map: dict[str, list[str]] = {}  # path -> list of vuln labels
     if vulns:
         catalog: Catalog = ctx.obj["catalog"]
         vdb = VulnDB(config=cfg, catalog=catalog)
@@ -381,6 +382,7 @@ def diff(
         except VulnDBAuthError as exc:
             console.print(f"[yellow]Warning: {exc}[/yellow]")
         vuln_rows = catalog.vulnerabilities_for(slug)
+        all_changed = set(summary.added + summary.removed + summary.modified)
         for row in vuln_rows:
             # Check if either diffed version falls in the affected range.
             affected_json = row["affected"] or "{}"
@@ -397,16 +399,34 @@ def diff(
                 label += f" [fixed in {fixed_in}]"
             vuln_labels.append(label)
 
+            # Fetch per-file references from MITRE CVE API.
+            if cve:
+                ref_files = _fetch_cve_file_refs(cve, slug)
+                for ref_path in ref_files:
+                    if ref_path in all_changed:
+                        vuln_file_map.setdefault(ref_path, []).append(label)
+
     # --- Summary table ---
     table = Table(title=f"{slug}: {version_a} -> {version_b}")
     table.add_column("Change")
     table.add_column("Path", overflow="fold")
+    if vulns:
+        table.add_column("Vulns", overflow="fold")
     for path in summary.added:
-        table.add_row("[green]+ added[/green]", path)
+        row = ["[green]+ added[/green]", path]
+        if vulns:
+            row.append(_vuln_badge(vuln_file_map.get(path)))
+        table.add_row(*row)
     for path in summary.removed:
-        table.add_row("[red]- removed[/red]", path)
+        row = ["[red]- removed[/red]", path]
+        if vulns:
+            row.append(_vuln_badge(vuln_file_map.get(path)))
+        table.add_row(*row)
     for path in summary.modified:
-        table.add_row("[yellow]~ modified[/yellow]", path)
+        row = ["[yellow]~ modified[/yellow]", path]
+        if vulns:
+            row.append(_vuln_badge(vuln_file_map.get(path)))
+        table.add_row(*row)
     console.print(table)
     console.print(
         f"[bold]{len(summary.added)} added, "
@@ -442,6 +462,51 @@ def diff(
         if diff_text:
             _print_colored_diff(diff_text)
             console.print()
+
+
+def _fetch_cve_file_refs(cve_id: str, slug: str) -> set[str]:
+    """Fetch file references from MITRE CVE API for a given CVE.
+
+    Parses plugins.trac.wordpress.org/browser URLs and extracts relative
+    file paths matching the plugin slug. Returns a set of relative paths.
+    """
+    import re
+
+    import httpx as _httpx
+
+    url = f"https://cveawg.mitre.org/api/cve/{cve_id}"
+    try:
+        resp = _httpx.get(url, timeout=15, follow_redirects=True)
+        if resp.status_code != 200:
+            return set()
+        data = resp.json()
+    except Exception:
+        return set()
+
+    refs: set[str] = set()
+    # Pattern: plugins.trac.wordpress.org/browser/<slug>/<tag_or_trunk>/<path>#L<line>
+    pattern = re.compile(
+        rf"plugins\.trac\.wordpress\.org/browser/{re.escape(slug)}"
+        r"/(?:tags/[^/]+|trunk)/(.+?)(?:#L\d+)?$"
+    )
+
+    # Walk all references in the CNA container.
+    containers = data.get("containers", {})
+    cna = containers.get("cna", {})
+    for ref in cna.get("references", []):
+        ref_url = ref.get("url", "")
+        m = pattern.search(ref_url)
+        if m:
+            refs.add(m.group(1))
+
+    return refs
+
+
+def _vuln_badge(labels: list[str] | None) -> str:
+    """Return a short Rich-formatted badge for the vuln column."""
+    if not labels:
+        return ""
+    return f"[bold red]{len(labels)} vuln(s)[/bold red]"
 
 
 def _print_colored_diff(diff_text: str) -> None:
