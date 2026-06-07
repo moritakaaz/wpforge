@@ -91,7 +91,8 @@ Notable flags:
 - `download --extract`: auto-extract after downloading.
 - `download --include-trunk`: include the development snapshot.
 - `diff --file <path>`: show unified diff for a single file only.
-- `diff --summary-only`: show only the file-change table, skip inline diff.
+- `diff --full`: opt-in to show full colored unified diff for all files.
+- `diff --vulns`: cross-reference changed files with Wordfence vuln data.
 - `clean` requires at least one of `--archives / --extracted / --vulndb /
   --catalog / --all`; with no flags it is a no-op by design (so users
   cannot wipe data accidentally).

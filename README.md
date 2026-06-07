@@ -174,12 +174,13 @@ Cross-reference against the Wordfence vuln feed:
 wpforge vulns contact-form-7 woocommerce
 ```
 
-Diff two versions (shows git-style colored unified diff by default):
+Diff two versions (shows a summary table by default):
 
 ```bash
 wpforge diff contact-form-7 5.7 5.7.1
-wpforge diff contact-form-7 5.7 5.7.1 --file contact-form-7.php
-wpforge diff contact-form-7 5.7 5.7.1 --summary-only   # table only, no inline diff
+wpforge diff contact-form-7 5.7 5.7.1 --full            # full colored unified diff
+wpforge diff contact-form-7 5.7 5.7.1 --file readme.txt # diff a single file
+wpforge diff contact-form-7 5.7 5.7.1 --vulns           # cross-reference with Wordfence
 ```
 
 Inspect catalog state:

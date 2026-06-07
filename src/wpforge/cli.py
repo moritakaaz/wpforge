@@ -333,10 +333,16 @@ def vulns(
     help="Print a unified diff of a single file across the two versions.",
 )
 @click.option(
-    "--summary-only",
+    "--full",
     is_flag=True,
     default=False,
-    help="Show only the file-change summary table (no inline diff).",
+    help="Show full unified diff for all changed files (can be very long).",
+)
+@click.option(
+    "--vulns",
+    is_flag=True,
+    default=False,
+    help="Cross-reference changed files with Wordfence vulnerability data.",
 )
 @click.pass_context
 def diff(
@@ -345,12 +351,15 @@ def diff(
     version_a: str,
     version_b: str,
     file_path: str | None,
-    summary_only: bool,
+    full: bool,
+    vulns: bool,
 ) -> None:
     """Diff two extracted versions of SLUG.
 
-    By default shows a git-style colored unified diff for all changed files.
-    Use --summary-only for just the file list, or --file for a single file.
+    By default shows a summary table of changed files.
+    Use --full for a git-style colored unified diff of all files,
+    or --file for a single file. Use --vulns to cross-reference changes
+    with Wordfence Intelligence vulnerability data.
     """
     cfg: Config = ctx.obj["config"]
     differ = Differ(cfg)
@@ -360,15 +369,58 @@ def diff(
         return
 
     summary = differ.summarise(slug, version_a, version_b)
+
+    # --- Vulnerability cross-reference ---
+    vuln_files: dict[str, list[str]] = {}
+    if vulns:
+        catalog: Catalog = ctx.obj["catalog"]
+        vdb = VulnDB(config=cfg, catalog=catalog)
+        try:
+            vdb.refresh()
+            vdb.import_for_slugs([slug])
+        except VulnDBAuthError as exc:
+            console.print(f"[yellow]Warning: {exc}[/yellow]")
+        vuln_rows = catalog.vulnerabilities_for(slug)
+        if vuln_rows:
+            for row in vuln_rows:
+                title = row["title"] or "Unknown vulnerability"
+                severity = row["severity"] or "unknown"
+                cve = row["cve"] or ""
+                fixed_in = row["fixed_in"] or ""
+                label = f"{severity.upper()}: {title}"
+                if cve:
+                    label += f" ({cve})"
+                if fixed_in:
+                    label += f" [fixed in {fixed_in}]"
+                # Mark all files as potentially relevant (vuln scope is plugin-wide)
+                all_changed = summary.added + summary.removed + summary.modified
+                for p in all_changed:
+                    vuln_files.setdefault(p, []).append(label)
+
+    # --- Summary table ---
     table = Table(title=f"{slug}: {version_a} -> {version_b}")
     table.add_column("Change")
     table.add_column("Path", overflow="fold")
+    if vulns:
+        table.add_column("Vulns", overflow="fold")
     for path in summary.added:
-        table.add_row("[green]+ added[/green]", path)
+        vuln_col = _vuln_badge(vuln_files.get(path)) if vulns else None
+        row = ["[green]+ added[/green]", path]
+        if vulns:
+            row.append(vuln_col or "")
+        table.add_row(*row)
     for path in summary.removed:
-        table.add_row("[red]- removed[/red]", path)
+        vuln_col = _vuln_badge(vuln_files.get(path)) if vulns else None
+        row = ["[red]- removed[/red]", path]
+        if vulns:
+            row.append(vuln_col or "")
+        table.add_row(*row)
     for path in summary.modified:
-        table.add_row("[yellow]~ modified[/yellow]", path)
+        vuln_col = _vuln_badge(vuln_files.get(path)) if vulns else None
+        row = ["[yellow]~ modified[/yellow]", path]
+        if vulns:
+            row.append(vuln_col or "")
+        table.add_row(*row)
     console.print(table)
     console.print(
         f"[bold]{len(summary.added)} added, "
@@ -376,7 +428,23 @@ def diff(
         f"{len(summary.modified)} modified[/bold]"
     )
 
-    if summary_only:
+    # --- Vuln summary ---
+    if vulns and vuln_files:
+        unique_vulns = set()
+        for labels in vuln_files.values():
+            unique_vulns.update(labels)
+        console.print()
+        console.print(
+            f"[bold red]{len(unique_vulns)} known vulnerability(ies) "
+            f"affect this plugin in the diffed range:[/bold red]"
+        )
+        for v in sorted(unique_vulns):
+            console.print(f"  [red]* {v}[/red]")
+    elif vulns:
+        console.print()
+        console.print("[green]No known vulnerabilities found for this plugin.[/green]")
+
+    if not full:
         return
 
     # Show unified diff for all changed/added/removed files.
@@ -394,18 +462,30 @@ def diff(
 
 
 def _print_colored_diff(diff_text: str) -> None:
-    """Print unified diff lines with git-style coloring."""
+    """Print unified diff lines with git-style coloring.
+
+    Uses Rich Text objects to avoid interpreting diff content as markup.
+    """
+    from rich.text import Text
+
     for line in diff_text.splitlines():
         if line.startswith("---") or line.startswith("+++"):
-            console.print(f"[bold]{line}[/bold]")
+            console.print(Text(line, style="bold"))
         elif line.startswith("@@"):
-            console.print(f"[cyan]{line}[/cyan]")
+            console.print(Text(line, style="cyan"))
         elif line.startswith("+"):
-            console.print(f"[green]{line}[/green]")
+            console.print(Text(line, style="green"))
         elif line.startswith("-"):
-            console.print(f"[red]{line}[/red]")
+            console.print(Text(line, style="red"))
         else:
-            console.print(line)
+            console.print(Text(line))
+
+
+def _vuln_badge(labels: list[str] | None) -> str:
+    """Return a short Rich-formatted badge for the vuln column."""
+    if not labels:
+        return ""
+    return f"[bold red]{len(labels)} vuln(s)[/bold red]"
 
 
 # ---------------------------------------------------------------------------
