@@ -576,7 +576,12 @@ def _read_snippet(
 
     Returns the snippet with line numbers, or None if the file can't be read.
     """
-    file_path = cfg.extracted_dir / slug / version / rel_path
+    # Plugin zips extract to <slug>/<version>/<slug>/... — resolve the inner slug dir
+    # if present, same as Differ._root_for().
+    base = cfg.extracted_dir / slug / version
+    candidate = base / slug
+    root = candidate if candidate.is_dir() else base
+    file_path = root / rel_path
     if not file_path.is_file():
         return None
     try:
