@@ -371,7 +371,7 @@ def diff(
     summary = differ.summarise(slug, version_a, version_b)
 
     # --- Vulnerability cross-reference ---
-    vuln_files: dict[str, list[str]] = {}
+    vuln_labels: list[str] = []
     if vulns:
         catalog: Catalog = ctx.obj["catalog"]
         vdb = VulnDB(config=cfg, catalog=catalog)
@@ -381,46 +381,32 @@ def diff(
         except VulnDBAuthError as exc:
             console.print(f"[yellow]Warning: {exc}[/yellow]")
         vuln_rows = catalog.vulnerabilities_for(slug)
-        if vuln_rows:
-            for row in vuln_rows:
-                title = row["title"] or "Unknown vulnerability"
-                severity = row["severity"] or "unknown"
-                cve = row["cve"] or ""
-                fixed_in = row["fixed_in"] or ""
-                label = f"{severity.upper()}: {title}"
-                if cve:
-                    label += f" ({cve})"
-                if fixed_in:
-                    label += f" [fixed in {fixed_in}]"
-                # Mark all files as potentially relevant (vuln scope is plugin-wide)
-                all_changed = summary.added + summary.removed + summary.modified
-                for p in all_changed:
-                    vuln_files.setdefault(p, []).append(label)
+        for row in vuln_rows:
+            # Check if either diffed version falls in the affected range.
+            affected_json = row["affected"] or "{}"
+            if not _version_in_affected(version_a, version_b, affected_json):
+                continue
+            title = row["title"] or "Unknown vulnerability"
+            severity = row["severity"] or "unknown"
+            cve = row["cve"] or ""
+            fixed_in = row["fixed_in"] or ""
+            label = f"{severity.upper()}: {title}"
+            if cve:
+                label += f" ({cve})"
+            if fixed_in:
+                label += f" [fixed in {fixed_in}]"
+            vuln_labels.append(label)
 
     # --- Summary table ---
     table = Table(title=f"{slug}: {version_a} -> {version_b}")
     table.add_column("Change")
     table.add_column("Path", overflow="fold")
-    if vulns:
-        table.add_column("Vulns", overflow="fold")
     for path in summary.added:
-        vuln_col = _vuln_badge(vuln_files.get(path)) if vulns else None
-        row = ["[green]+ added[/green]", path]
-        if vulns:
-            row.append(vuln_col or "")
-        table.add_row(*row)
+        table.add_row("[green]+ added[/green]", path)
     for path in summary.removed:
-        vuln_col = _vuln_badge(vuln_files.get(path)) if vulns else None
-        row = ["[red]- removed[/red]", path]
-        if vulns:
-            row.append(vuln_col or "")
-        table.add_row(*row)
+        table.add_row("[red]- removed[/red]", path)
     for path in summary.modified:
-        vuln_col = _vuln_badge(vuln_files.get(path)) if vulns else None
-        row = ["[yellow]~ modified[/yellow]", path]
-        if vulns:
-            row.append(vuln_col or "")
-        table.add_row(*row)
+        table.add_row("[yellow]~ modified[/yellow]", path)
     console.print(table)
     console.print(
         f"[bold]{len(summary.added)} added, "
@@ -429,16 +415,13 @@ def diff(
     )
 
     # --- Vuln summary ---
-    if vulns and vuln_files:
-        unique_vulns = set()
-        for labels in vuln_files.values():
-            unique_vulns.update(labels)
+    if vulns and vuln_labels:
         console.print()
         console.print(
-            f"[bold red]{len(unique_vulns)} known vulnerability(ies) "
+            f"[bold red]{len(vuln_labels)} known vulnerability(ies) "
             f"affect this plugin in the diffed range:[/bold red]"
         )
-        for v in sorted(unique_vulns):
+        for v in sorted(vuln_labels):
             console.print(f"  [red]* {v}[/red]")
     elif vulns:
         console.print()
@@ -481,11 +464,75 @@ def _print_colored_diff(diff_text: str) -> None:
             console.print(Text(line))
 
 
-def _vuln_badge(labels: list[str] | None) -> str:
-    """Return a short Rich-formatted badge for the vuln column."""
-    if not labels:
-        return ""
-    return f"[bold red]{len(labels)} vuln(s)[/bold red]"
+def _version_in_affected(
+    version_a: str, version_b: str, affected_json: str
+) -> bool:
+    """Check if either diffed version falls within a vulnerability's affected range.
+
+    The affected_json is a Wordfence-style dict like:
+      {"from": "6.0.0", "to": "6.0.6", "from_inclusive": true, "to_inclusive": true}
+    or a dict of such entries keyed by arbitrary strings.
+
+    We use a simple tuple-based version comparison which works for most
+    WordPress plugin versioning (dot-separated numeric segments).
+    """
+    import json as _json
+
+    try:
+        affected = _json.loads(affected_json)
+    except (ValueError, TypeError):
+        return True  # Can't parse — assume relevant to be safe.
+
+    if not affected:
+        return True  # No constraint data — assume relevant.
+
+    def _parse_ver(v: str) -> tuple[int, ...]:
+        parts: list[int] = []
+        for seg in v.split("."):
+            try:
+                parts.append(int(seg))
+            except ValueError:
+                break
+        return tuple(parts) if parts else (0,)
+
+    def _check_range(constraint: dict) -> bool:
+        """Return True if version_a or version_b is in the given range."""
+        from_ver = constraint.get("from_version") or constraint.get("from") or ""
+        to_ver = constraint.get("to_version") or constraint.get("to") or ""
+        from_inc = constraint.get("from_inclusive", True)
+        to_inc = constraint.get("to_inclusive", True)
+
+        if not from_ver and not to_ver:
+            return True  # No bounds — matches everything.
+
+        for ver_str in (version_a, version_b):
+            ver = _parse_ver(ver_str)
+            low = _parse_ver(from_ver) if from_ver else (0,)
+            high = _parse_ver(to_ver) if to_ver else (99999,)
+
+            low_ok = (ver >= low) if from_inc else (ver > low)
+            high_ok = (ver <= high) if to_inc else (ver < high)
+            if low_ok and high_ok:
+                return True
+        return False
+
+    # affected can be a single range dict or a dict of named ranges.
+    if isinstance(affected, dict):
+        # Check if it's a single range (has "from"/"to" keys).
+        if "from" in affected or "from_version" in affected or "to" in affected:
+            return _check_range(affected)
+        # Otherwise it's a dict of ranges keyed by arbitrary IDs.
+        for _key, constraint in affected.items():
+            if isinstance(constraint, dict) and _check_range(constraint):
+                return True
+        return False
+    elif isinstance(affected, list):
+        for constraint in affected:
+            if isinstance(constraint, dict) and _check_range(constraint):
+                return True
+        return False
+
+    return True  # Unknown shape — assume relevant.
 
 
 # ---------------------------------------------------------------------------
