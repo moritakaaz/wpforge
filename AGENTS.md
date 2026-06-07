@@ -84,7 +84,7 @@ data/vulndb/             cached Wordfence feed (~140 MB)
 
 ## CLI surface (current)
 
-`versions`, `download`, `extract`, `vulns`, `diff`, `info`, `clean`.
+`versions`, `download`, `extract`, `vulns`, `diff`, `scan`, `info`, `clean`.
 
 Notable flags:
 - `download --version / -v` (multiple): download only specific versions.
@@ -93,6 +93,12 @@ Notable flags:
 - `diff --file <path>`: show unified diff for a single file only.
 - `diff --full`: opt-in to show full colored unified diff for all files.
 - `diff --vulns`: cross-reference changed files with Wordfence vuln data.
+- `diff --output json`: machine-readable JSON output (includes vulns/diffs).
+- `vulns --output json`: machine-readable JSON output.
+- `scan --version / -v` (multiple): target specific versions (default: last 2).
+- `scan --full`: include full unified diff in output.
+- `scan --output json`: machine-readable JSON output.
+- `scan --list <file>`: batch scan from file of slugs (one per line, # comments).
 - `clean` requires at least one of `--archives / --extracted / --vulndb /
   --catalog / --all`; with no flags it is a no-op by design (so users
   cannot wipe data accidentally).

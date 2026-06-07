@@ -172,6 +172,7 @@ Cross-reference against the Wordfence vuln feed:
 
 ```bash
 wpforge vulns contact-form-7 woocommerce
+wpforge vulns contact-form-7 --output json               # machine-readable JSON output
 ```
 
 Diff two versions (shows a summary table by default):
@@ -181,6 +182,17 @@ wpforge diff contact-form-7 5.7 5.7.1
 wpforge diff contact-form-7 5.7 5.7.1 --full            # full colored unified diff
 wpforge diff contact-form-7 5.7 5.7.1 --file readme.txt # diff a single file
 wpforge diff contact-form-7 5.7 5.7.1 --vulns           # cross-reference with Wordfence
+wpforge diff contact-form-7 5.7 5.7.1 --output json     # machine-readable JSON output
+```
+
+All-in-one security scan (download → extract → diff → vulns):
+
+```bash
+wpforge scan contact-form-7                              # scan last 2 versions
+wpforge scan contact-form-7 -v 5.7 -v 5.7.1             # scan specific versions
+wpforge scan contact-form-7 --full                       # include full unified diff
+wpforge scan contact-form-7 --output json                # machine-readable JSON output
+wpforge scan --list plugins.txt                          # batch scan from file
 ```
 
 Inspect catalog state:

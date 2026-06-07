@@ -262,12 +262,20 @@ def extract(ctx: click.Context, slug: str, version: str | None) -> None:
     default=None,
     help="Wordfence API key (overrides WORDFENCE_API_KEY env var).",
 )
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format (text or json).",
+)
 @click.pass_context
 def vulns(
     ctx: click.Context,
     slugs: tuple[str, ...],
     refresh: bool,
     api_key: str | None,
+    output_format: str,
 ) -> None:
     """Cross-reference SLUGS against the Wordfence Intelligence feed.
 
@@ -295,6 +303,25 @@ def vulns(
             sys.exit(2)
 
     touched = db.import_for_slugs(slugs)
+
+    if output_format == "json":
+        import json
+
+        result: dict = {"slugs": {}}
+        for slug in slugs:
+            rows = catalog.vulnerabilities_for(slug)
+            result["slugs"][slug] = [
+                {
+                    "cve": row["cve"] or None,
+                    "severity": row["severity"] or None,
+                    "fixed_in": row["fixed_in"] or None,
+                    "title": row["title"] or None,
+                }
+                for row in rows
+            ]
+        click.echo(json.dumps(result, indent=2))
+        return
+
     console.print(f"[green]imported {touched} vulnerability records[/green]")
 
     for slug in slugs:
@@ -344,6 +371,13 @@ def vulns(
     default=False,
     help="Cross-reference changed files with Wordfence vulnerability data.",
 )
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format (text or json).",
+)
 @click.pass_context
 def diff(
     ctx: click.Context,
@@ -353,6 +387,7 @@ def diff(
     file_path: str | None,
     full: bool,
     vulns: bool,
+    output_format: str,
 ) -> None:
     """Diff two extracted versions of SLUG.
 
@@ -408,6 +443,46 @@ def diff(
                 for ref_path, _line in refs_with_lines:
                     if ref_path in all_changed:
                         vuln_file_map.setdefault(ref_path, []).append(label)
+
+    # --- JSON output ---
+    if output_format == "json":
+        import json
+
+        result: dict = {
+            "slug": slug,
+            "version_a": version_a,
+            "version_b": version_b,
+            "summary": {
+                "added": summary.added,
+                "removed": summary.removed,
+                "modified": summary.modified,
+            },
+        }
+        if vulns:
+            result["vulnerabilities"] = []
+            for label, cve, refs_with_lines in vuln_snippets:
+                vuln_entry: dict = {"label": label, "cve": cve, "files": []}
+                for ref_path, line_no in refs_with_lines:
+                    file_entry: dict = {"path": ref_path, "line": line_no}
+                    if line_no:
+                        snippet = _read_snippet(
+                            cfg, slug, version_a, ref_path, line_no
+                        )
+                        if snippet:
+                            file_entry["snippet"] = snippet
+                    vuln_entry["files"].append(file_entry)
+                result["vulnerabilities"].append(vuln_entry)
+        if full:
+            result["diffs"] = {}
+            all_paths = (
+                summary.added + summary.removed + summary.modified
+            )
+            for rel_path in all_paths:
+                diff_text = differ.unified(slug, version_a, version_b, rel_path)
+                if diff_text:
+                    result["diffs"][rel_path] = diff_text
+        click.echo(json.dumps(result, indent=2))
+        return
 
     # --- Summary table ---
     table = Table(title=f"{slug}: {version_a} -> {version_b}")
