@@ -731,6 +731,284 @@ def info(ctx: click.Context, slug: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# scan
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.argument("slugs", nargs=-1, required=True)
+@click.option(
+    "--version", "-v",
+    multiple=True,
+    help="Scan specific version(s). Defaults to last 2 published versions.",
+)
+@click.option(
+    "--full",
+    is_flag=True,
+    default=False,
+    help="Show full unified diff for all changed files.",
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format (text or json).",
+)
+@click.option(
+    "--list",
+    "list_file",
+    type=click.Path(exists=True),
+    default=None,
+    help="Read plugin slugs from a file (one per line).",
+)
+@click.pass_context
+def scan(
+    ctx: click.Context,
+    slugs: tuple[str, ...],
+    version: tuple[str, ...],
+    full: bool,
+    output_format: str,
+    list_file: str | None,
+) -> None:
+    """All-in-one security scan: download -> extract -> diff -> vulns.
+
+    Downloads the last two published versions (or --version targets),
+    extracts them, diffs them, and cross-references with Wordfence
+    vulnerability data including code snippets.
+
+    Use --list to supply a file of slugs (one per line) for batch scanning.
+    """
+    cfg: Config = ctx.obj["config"]
+    catalog: Catalog = ctx.obj["catalog"]
+
+    # Collect slugs from --list file if provided.
+    all_slugs: list[str] = list(slugs)
+    if list_file:
+        with open(list_file, encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if s and not s.startswith("#"):
+                    all_slugs.append(s)
+    if not all_slugs:
+        console.print("[red]No slugs provided.[/red]")
+        sys.exit(2)
+
+    json_results: list[dict] = []
+
+    for slug in all_slugs:
+        if output_format == "text":
+            console.rule(f"[bold]{slug}[/bold]")
+
+        # Step 1: Fetch plugin info and determine versions to scan.
+        async def _fetch_info(s: str = slug) -> object | None:
+            async with WordPressAPI(
+                user_agent=cfg.user_agent, timeout=cfg.request_timeout
+            ) as api:
+                try:
+                    return await api.fetch_plugin_info(s)
+                except PluginNotFoundError as exc:
+                    if output_format == "text":
+                        console.print(f"[red]{exc}[/red]")
+                    return None
+
+        info = asyncio.run(_fetch_info())
+        if info is None:
+            if output_format == "json":
+                json_results.append({"slug": slug, "error": "plugin not found"})
+            continue
+
+        catalog.upsert_plugin(
+            slug=info.slug,
+            name=info.name,
+            homepage=info.homepage,
+            last_updated=info.last_updated,
+        )
+
+        # Determine which two versions to diff.
+        available = [pv for pv in info.versions if pv.version.lower() != "trunk"]
+        if version:
+            targets = [pv for pv in available if pv.version in version]
+        else:
+            # Default: last 2 versions (most recent at end of list).
+            targets = available[-2:] if len(available) >= 2 else available
+
+        if len(targets) < 2:
+            msg = f"Need at least 2 versions to diff, found {len(targets)}"
+            if output_format == "text":
+                console.print(f"[yellow]{msg}[/yellow]")
+            else:
+                json_results.append({"slug": slug, "error": msg})
+            continue
+
+        version_a = targets[-2].version
+        version_b = targets[-1].version
+
+        # Step 2: Download.
+        for pv in targets:
+            catalog.register_version(slug=pv.slug, version=pv.version, download_url=pv.download_url)
+
+        async def _download(dl_targets=targets) -> list:
+            downloader = Downloader(config=cfg, catalog=catalog)
+            with make_progress() as progress:
+                return await downloader.download_all(dl_targets, progress=progress)
+
+        if output_format == "text":
+            console.print(f"[dim]Downloading {version_a} and {version_b}...[/dim]")
+        results = asyncio.run(_download())
+
+        # Step 3: Extract.
+        extractor = Extractor(config=cfg, catalog=catalog)
+        for r in results:
+            if r.missing or not r.sha256:
+                continue
+            extractor.extract(r.slug, r.version, r.path)
+
+        if output_format == "text":
+            console.print(f"[dim]Extracted. Diffing {version_a} -> {version_b}...[/dim]")
+
+        # Step 4: Diff.
+        differ = Differ(cfg)
+        try:
+            summary = differ.summarise(slug, version_a, version_b)
+        except FileNotFoundError as exc:
+            msg = str(exc)
+            if output_format == "text":
+                console.print(f"[red]{msg}[/red]")
+            else:
+                json_results.append({"slug": slug, "error": msg})
+            continue
+
+        # Step 5: Vulns.
+        vuln_labels: list[str] = []
+        vuln_file_map: dict[str, list[str]] = {}
+        vuln_snippets: list[tuple[str, str, list[tuple[str, int | None]]]] = []
+        vdb = VulnDB(config=cfg, catalog=catalog)
+        try:
+            vdb.refresh()
+            vdb.import_for_slugs([slug])
+        except VulnDBAuthError as exc:
+            if output_format == "text":
+                console.print(f"[yellow]Warning: {exc}[/yellow]")
+
+        vuln_rows = catalog.vulnerabilities_for(slug)
+        all_changed = set(summary.added + summary.removed + summary.modified)
+        for row in vuln_rows:
+            affected_json = row["affected"] or "{}"
+            if not _version_in_affected(version_a, version_b, affected_json):
+                continue
+            title = row["title"] or "Unknown vulnerability"
+            severity = row["severity"] or "unknown"
+            cve = row["cve"] or ""
+            fixed_in = row["fixed_in"] or ""
+            label = f"{severity.upper()}: {title}"
+            if cve:
+                label += f" ({cve})"
+            if fixed_in:
+                label += f" [fixed in {fixed_in}]"
+            vuln_labels.append(label)
+
+            if cve:
+                refs_with_lines = _fetch_cve_file_refs_with_lines(cve, slug)
+                vuln_snippets.append((label, cve, refs_with_lines))
+                for ref_path, _line in refs_with_lines:
+                    if ref_path in all_changed:
+                        vuln_file_map.setdefault(ref_path, []).append(label)
+
+        # --- Output ---
+        if output_format == "json":
+            result_entry: dict = {
+                "slug": slug,
+                "version_a": version_a,
+                "version_b": version_b,
+                "changes": {
+                    "added": summary.added,
+                    "removed": summary.removed,
+                    "modified": summary.modified,
+                },
+                "vulnerabilities": [],
+            }
+            for label, cve, refs in vuln_snippets:
+                vuln_entry: dict = {"label": label, "cve": cve, "files": []}
+                for ref_path, line_no in refs:
+                    file_entry: dict = {"path": ref_path, "line": line_no}
+                    if line_no:
+                        snippet = _read_snippet(cfg, slug, version_a, ref_path, line_no)
+                        if snippet:
+                            file_entry["snippet"] = snippet
+                    vuln_entry["files"].append(file_entry)
+                result_entry["vulnerabilities"].append(vuln_entry)
+            json_results.append(result_entry)
+        else:
+            # Text output — reuse diff table rendering.
+            table = Table(title=f"{slug}: {version_a} -> {version_b}")
+            table.add_column("Change")
+            table.add_column("Path", overflow="fold")
+            table.add_column("Vulns", overflow="fold")
+            for path in summary.added:
+                table.add_row("[green]+ added[/green]", path, _vuln_badge(vuln_file_map.get(path)))
+            for path in summary.removed:
+                table.add_row("[red]- removed[/red]", path, _vuln_badge(vuln_file_map.get(path)))
+            for path in summary.modified:
+                table.add_row(
+                    "[yellow]~ modified[/yellow]", path, _vuln_badge(vuln_file_map.get(path))
+                )
+            console.print(table)
+            console.print(
+                f"[bold]{len(summary.added)} added, "
+                f"{len(summary.removed)} removed, "
+                f"{len(summary.modified)} modified[/bold]"
+            )
+
+            if vuln_labels:
+                from rich.panel import Panel
+                from rich.text import Text
+
+                console.print()
+                console.print(
+                    f"[bold red]{len(vuln_labels)} known vulnerability(ies) "
+                    f"affect this plugin in the diffed range:[/bold red]"
+                )
+                for label, _cve, refs_with_lines in vuln_snippets:
+                    console.print(f"\n  [red]* {label}[/red]")
+                    if refs_with_lines:
+                        for ref_path, line_no in refs_with_lines:
+                            if line_no:
+                                snippet = _read_snippet(
+                                    cfg, slug, version_a, ref_path, line_no
+                                )
+                                if snippet:
+                                    header = f"{ref_path}#L{line_no}"
+                                    console.print(Panel(
+                                        Text(snippet),
+                                        title=header,
+                                        border_style="red",
+                                        expand=False,
+                                    ))
+            else:
+                console.print("[green]No known vulnerabilities in this range.[/green]")
+
+            if full:
+                console.print()
+                all_paths = (
+                    [(p, "added") for p in summary.added]
+                    + [(p, "removed") for p in summary.removed]
+                    + [(p, "modified") for p in summary.modified]
+                )
+                for rel_path, _change_type in all_paths:
+                    diff_text = differ.unified(slug, version_a, version_b, rel_path)
+                    if diff_text:
+                        _print_colored_diff(diff_text)
+                        console.print()
+
+    # Final JSON output.
+    if output_format == "json":
+        import json as _json2
+
+        click.echo(_json2.dumps(json_results, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # clean
 # ---------------------------------------------------------------------------
 
